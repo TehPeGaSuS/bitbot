@@ -1,39 +1,46 @@
 #--require-config tls-api-key
 #--require-config tls-api-certificate
 
-import http.server, json, ssl, threading, uuid, urllib.parse
+import json, logging, ssl, threading, uuid, urllib.parse
 from src import ModuleManager, utils
+
+import tornado.ioloop, tornado.web
+logging.getLogger('tornado.access').disabled = True
+logging.getLogger('tornado.application').disabled = True
+logging.getLogger('tornado.general').disabled = True
 
 _bot = None
 _events = None
 _log = None
-class Handler(http.server.BaseHTTPRequestHandler):
+class Handler(tornado.web.RequestHandler):
     timeout = 10
 
+    def _get_method(self):
+        return self.request.method
+
     def _path_data(self):
-        path = urllib.parse.urlparse(self.path).path
+        path = urllib.parse.urlparse(self.request.path).path
         _, _, endpoint = path[1:].partition("/")
         endpoint, _, args = endpoint.partition("/")
         args = list(filter(None, args.split("/")))
         return path, endpoint, args
 
     def _url_params(self):
-        parsed = urllib.parse.urlparse(self.path)
+        parsed = urllib.parse.urlparse(self.request.path)
         query = urllib.parse.parse_qs(parsed.query)
         return dict([(k, v[0]) for k, v in query.items()])
 
     def _body(self):
-        content_length = int(self.headers.get("content-length", 0))
-        return self.rfile.read(content_length)
+        return self.request.body
 
     def _respond(self, code, headers, data):
-        self.send_response(code)
-        for key, value in headers:
-            self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(data.encode("utf8"))
+        self.set_status(code)
+        for key, value in headers.items():
+            self.set_header(key, value)
+        self.write(data.encode("utf8"))
 
-    def _handle(self, method):
+    def _handle(self):
+        method = self._get_method()
         path, endpoint, args = self._path_data()
         headers = utils.CaseInsensitiveDict(dict(self.headers.items()))
         params = self._url_params()
@@ -87,11 +94,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._respond(code, headers, response)
 
 
-    def do_GET(self):
-        self._handle("GET")
-
-    def do_POST(self):
-        self._handle("POST")
+    def get(self):
+        self._handle()
+    def post(self):
+        self._handle()
 
     def log_message(self, format, *args):
         _log.info("[HTTP] " + format, args)
@@ -115,18 +121,29 @@ class Module(ModuleManager.BaseModule):
 
         self.httpd = None
         if self.bot.get_setting("rest-api", False):
-            self.httpd = http.server.HTTPServer(("", 5000), Handler)
-            self.httpd.socket = ssl.wrap_socket(self.httpd.socket,
-                keyfile=self.bot.config["tls-api-key"],
-                certfile=self.bot.config["tls-api-certificate"],
-                server_side=True)
-            self.thread = threading.Thread(target=self.httpd.serve_forever)
+            ssl_options = ssl.SSLContext(ssl.PROTOCOL_TLS)
+            ssl_options.load_cert_chain(
+                self.bot.config["tls-api-certificate"],
+                keyfile=self.bot.config["tls-api-key"])
+
+            app = tornado.web.Application([
+                ("/", Handler)
+            ])
+            self.httpd = tornado.httpserver.HTTPServer(app,
+                ssl_options=ssl_options)
+            self.httpd.listen(5001)
+
+            self.thread = threading.Thread(target=self._run)
             self.thread.daemon = True
             self.thread.start()
 
     def unload(self):
         if self.httpd:
-            self.httpd.shutdown()
+            self._loop.stop()
+
+    def _run(self):
+        self._loop = tornado.ioloop.IOLoop()
+        self._loop.start()
 
     @utils.hook("received.command.apikey", private_only=True, min_args=1)
     def api_key(self, event):

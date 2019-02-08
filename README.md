@@ -6,6 +6,7 @@ Python3 event-driven modular IRC bot!
 * [requests](https://pypi.org/project/requests/)
 * [scrypt](https://pypi.python.org/pypi/scrypt)
 * [suds](https://pypi.python.org/pypi/suds-jurko)
+* [tornado](https://pypi.org/project/tornado/)
 * [twitter](https://pypi.python.org/pypi/twitter)
 
 Use `pip3 install -r requirements.txt` to install them all at once.

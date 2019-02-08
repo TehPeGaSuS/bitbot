@@ -2,5 +2,5 @@ beautifulsoup4
 requests
 scrypt
 suds-jurko
+tornado
 twitter
-
